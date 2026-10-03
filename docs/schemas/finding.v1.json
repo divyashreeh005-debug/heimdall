@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://heimdall.example/schema/finding.v1.json",
+  "title": "HeimdallFindingV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "fingerprint",
+    "claim_class",
+    "title",
+    "claim",
+    "severity",
+    "verification"
+  ],
+  "properties": {
+    "schema": {
+      "const": "heimdall.finding.v1"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "agent_id": {
+      "type": "string"
+    },
+    "claim_class": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "claim": {
+      "type": "string"
+    },
+    "severity": {
+      "enum": ["critical", "high", "medium", "low", "info"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "locations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "start_line"],
+        "properties": {
+          "path": { "type": "string" },
+          "start_line": { "type": "integer" },
+          "end_line": { "type": "integer" },
+          "symbol": { "type": "string" }
+        }
+      }
+    },
+    "skill_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "tool_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "verification": {
+      "type": "object",
+      "required": ["status", "reason"],
+      "properties": {
+        "status": {
+          "enum": ["VERIFIED", "UNVERIFIED", "REJECTED", "FALSE_POSITIVE"]
+        },
+        "confidence": { "type": "number" },
+        "reason": { "type": "string" },
+        "methods": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "summary"],
+        "properties": {
+          "kind": {
+            "enum": [
+              "code_location",
+              "ast_trace",
+              "static_analysis",
+              "test_result",
+              "dependency",
+              "reproduction",
+              "secret_fingerprint",
+              "policy"
+            ]
+          },
+          "tool": { "type": "string" },
+          "summary": { "type": "string" },
+          "uri": { "type": "string" }
+        }
+      }
+    },
+    "contributes_to_score": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,225 @@
+asyncapi: 3.0.0
+info:
+  title: Heimdall Events
+  version: 0.1.0
+  description: |
+    Internal job and domain events. POC transport is PostgreSQL
+    (`analysis_jobs` + LISTEN/NOTIFY optional). This file is the contract,
+    not a broker requirement. Redis/Temporal are later.
+
+defaultContentType: application/json
+
+channels:
+  analysisJobQueued:
+    address: heimdall.analysis.job.queued
+    messages:
+      queued:
+        $ref: "#/components/messages/AnalysisJobQueued"
+
+  analysisJobRunning:
+    address: heimdall.analysis.job.running
+    messages:
+      running:
+        $ref: "#/components/messages/AnalysisJobRunning"
+
+  analysisCompleted:
+    address: heimdall.analysis.completed
+    messages:
+      completed:
+        $ref: "#/components/messages/AnalysisCompleted"
+
+  verdictComputed:
+    address: heimdall.verdict.computed
+    messages:
+      computed:
+        $ref: "#/components/messages/VerdictComputed"
+
+  decisionPublished:
+    address: heimdall.decision.published
+    messages:
+      published:
+        $ref: "#/components/messages/DecisionPublished"
+
+  webhookRejected:
+    address: heimdall.webhook.rejected
+    messages:
+      rejected:
+        $ref: "#/components/messages/WebhookRejected"
+
+operations:
+  enqueueAnalysis:
+    action: send
+    channel:
+      $ref: "#/channels/analysisJobQueued"
+    summary: API writes a job row after a verified webhook
+
+  claimAnalysis:
+    action: receive
+    channel:
+      $ref: "#/channels/analysisJobQueued"
+    summary: Worker SKIP LOCKED claim
+
+  emitRunning:
+    action: send
+    channel:
+      $ref: "#/channels/analysisJobRunning"
+
+  emitCompleted:
+    action: send
+    channel:
+      $ref: "#/channels/analysisCompleted"
+
+  emitVerdict:
+    action: send
+    channel:
+      $ref: "#/channels/verdictComputed"
+
+  emitPublished:
+    action: send
+    channel:
+      $ref: "#/channels/decisionPublished"
+
+components:
+  messages:
+    AnalysisJobQueued:
+      name: AnalysisJobQueued
+      payload:
+        $ref: "#/components/schemas/AnalysisJobQueued"
+
+    AnalysisJobRunning:
+      name: AnalysisJobRunning
+      payload:
+        $ref: "#/components/schemas/AnalysisJobRunning"
+
+    AnalysisCompleted:
+      name: AnalysisCompleted
+      payload:
+        $ref: "#/components/schemas/AnalysisCompleted"
+
+    VerdictComputed:
+      name: VerdictComputed
+      payload:
+        $ref: "#/components/schemas/VerdictComputed"
+
+    DecisionPublished:
+      name: DecisionPublished
+      payload:
+        $ref: "#/components/schemas/DecisionPublished"
+
+    WebhookRejected:
+      name: WebhookRejected
+      payload:
+        $ref: "#/components/schemas/WebhookRejected"
+
+  schemas:
+    Envelope:
+      type: object
+      required: [event_id, event_type, occurred_at, org_id, trace_id]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        org_id:
+          type: string
+          format: uuid
+        trace_id:
+          type: string
+        analysis_run_id:
+          type: string
+          format: uuid
+
+    AnalysisJobQueued:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [repository_id, pull_number, head_sha, delivery_id]
+          properties:
+            repository_id:
+              type: string
+              format: uuid
+            pull_number:
+              type: integer
+            head_sha:
+              type: string
+            base_sha:
+              type: string
+            delivery_id:
+              type: string
+            parent_run_id:
+              type: string
+              format: uuid
+              description: Previous run on this PR if incremental
+
+    AnalysisJobRunning:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            worker_id:
+              type: string
+            attempt:
+              type: integer
+
+    AnalysisCompleted:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [succeeded, failed, cancelled]
+            duration_ms:
+              type: integer
+            error_code:
+              type: string
+
+    VerdictComputed:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [score, band, verdict, inputs_hash]
+          properties:
+            score:
+              type: integer
+            band:
+              type: string
+              enum: [LOW, MEDIUM, HIGH, CRITICAL]
+            verdict:
+              type: string
+              enum: [MERGE, REVIEW, BLOCK]
+            inputs_hash:
+              type: string
+
+    DecisionPublished:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          required: [verdict, check_conclusion]
+          properties:
+            verdict:
+              type: string
+              enum: [MERGE, REVIEW, BLOCK]
+            check_conclusion:
+              type: string
+              enum: [success, neutral, failure]
+            github_check_id:
+              type: string
+            comment_id:
+              type: string
+
+    WebhookRejected:
+      allOf:
+        - $ref: "#/components/schemas/Envelope"
+        - type: object
+          properties:
+            reason:
+              type: string
+              enum: [hmac, too_large, malformed, replay]
+            delivery_id:
+              type: string

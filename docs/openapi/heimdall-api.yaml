@@ -1,0 +1,828 @@
+openapi: 3.1.0
+info:
+  title: Heimdall API
+  version: 0.1.0
+  description: |
+    HTTP contract for Heimdall Console and GitHub webhooks.
+    Implementation is later; this file is the source of truth for the docs POC.
+    JWT RS256 on all `/v1` paths except where noted. Webhooks use HMAC, not JWT.
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://heimdall.example.internal
+    description: Operator ingress
+
+tags:
+  - name: health
+  - name: auth
+  - name: pull-requests
+  - name: findings
+  - name: inbox
+  - name: skills
+  - name: policy
+  - name: audit
+  - name: eval
+  - name: webhooks
+
+paths:
+  /actuator/health:
+    get:
+      tags: [health]
+      summary: Liveness/readiness
+      security: []
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [UP, DOWN, OUT_OF_SERVICE]
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Exchange credentials for JWT (POC local users)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        "200":
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenPair"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /webhooks/github:
+    post:
+      tags: [webhooks]
+      summary: GitHub App webhook
+      security: []
+      parameters:
+        - in: header
+          name: X-GitHub-Event
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: X-GitHub-Delivery
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: X-Hub-Signature-256
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "202":
+          description: Accepted or duplicate delivery
+        "401":
+          description: HMAC failed
+        "413":
+          description: Body too large
+
+  /v1/pull-requests:
+    get:
+      tags: [pull-requests]
+      summary: List pull requests for the caller's org
+      parameters:
+        - in: query
+          name: repo_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: verdict
+          schema:
+            $ref: "#/components/schemas/Verdict"
+        - in: query
+          name: band
+          schema:
+            $ref: "#/components/schemas/RiskBand"
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: size
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: Page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullRequestList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/pull-requests/{id}:
+    get:
+      tags: [pull-requests]
+      summary: PR detail with latest analysis
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullRequestDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/pull-requests/{id}/runs:
+    get:
+      tags: [pull-requests]
+      summary: Analysis runs (risk evolution)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Runs oldest to newest
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AnalysisRunSummary"
+
+  /v1/pull-requests/{id}/impact:
+    get:
+      tags: [pull-requests]
+      summary: Impact graph for latest successful run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImpactGraph"
+
+  /v1/analyses/{id}/findings:
+    get:
+      tags: [findings]
+      summary: Findings for a run
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - in: query
+          name: verification_status
+          schema:
+            $ref: "#/components/schemas/VerificationStatus"
+      responses:
+        "200":
+          description: Findings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Finding"
+
+  /v1/findings/{id}/feedback:
+    post:
+      tags: [findings]
+      summary: Label a finding for eval
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindingFeedbackRequest"
+      responses:
+        "204":
+          description: Recorded
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/inbox:
+    get:
+      tags: [inbox]
+      summary: UNVERIFIED high/critical queue
+      responses:
+        "200":
+          description: Inbox
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Finding"
+
+  /v1/skills/language:
+    get:
+      tags: [skills]
+      summary: Installed language skill packs
+      responses:
+        "200":
+          description: Packs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SkillPack"
+
+  /v1/repositories/{id}/project-skill:
+    get:
+      tags: [skills]
+      summary: Current project skill
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Project skill
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSkill"
+    put:
+      tags: [skills]
+      summary: Save a new project skill version (admin)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectSkillWrite"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSkill"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/policy:
+    get:
+      tags: [policy]
+      summary: Active org policy
+      responses:
+        "200":
+          description: Policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyDocument"
+    put:
+      tags: [policy]
+      summary: Publish new policy version (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyWrite"
+      responses:
+        "200":
+          description: Published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyDocument"
+        "400":
+          description: Schema invalid
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/audit:
+    get:
+      tags: [audit]
+      summary: Audit events
+      parameters:
+        - in: query
+          name: pull_request_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEvent"
+
+  /v1/eval/summary:
+    get:
+      tags: [eval]
+      summary: Precision with vs without verification guard
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvalSummary"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    bearerJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Id:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT
+    Forbidden:
+      description: Insufficient role
+    NotFound:
+      description: Unknown id in this org
+
+  schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, expires_in]
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+
+    Verdict:
+      type: string
+      enum: [MERGE, REVIEW, BLOCK]
+
+    RiskBand:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+
+    VerificationStatus:
+      type: string
+      enum: [VERIFIED, UNVERIFIED, REJECTED, FALSE_POSITIVE]
+
+    Severity:
+      type: string
+      enum: [critical, high, medium, low, info]
+
+    PullRequestList:
+      type: object
+      required: [items, page, size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PullRequestSummary"
+        page:
+          type: integer
+        size:
+          type: integer
+        total:
+          type: integer
+
+    PullRequestSummary:
+      type: object
+      required: [id, number, title, repo, verdict, score, band]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: integer
+        title:
+          type: string
+        repo:
+          type: string
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        band:
+          $ref: "#/components/schemas/RiskBand"
+        verified_count:
+          type: integer
+        rejected_count:
+          type: integer
+        unverified_count:
+          type: integer
+        head_sha:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    PullRequestDetail:
+      type: object
+      required: [summary, latest_run, decision]
+      properties:
+        summary:
+          $ref: "#/components/schemas/PullRequestSummary"
+        latest_run:
+          $ref: "#/components/schemas/AnalysisRunSummary"
+        decision:
+          $ref: "#/components/schemas/Decision"
+        risk:
+          $ref: "#/components/schemas/RiskSnapshot"
+
+    AnalysisRunSummary:
+      type: object
+      required: [id, head_sha, status, score, verdict]
+      properties:
+        id:
+          type: string
+          format: uuid
+        head_sha:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled]
+        score:
+          type: integer
+        band:
+          $ref: "#/components/schemas/RiskBand"
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        skill_versions:
+          type: array
+          items:
+            type: string
+        model_id:
+          type: string
+        completed_at:
+          type: string
+          format: date-time
+
+    Decision:
+      type: object
+      required: [verdict, explanation]
+      properties:
+        verdict:
+          $ref: "#/components/schemas/Verdict"
+        explanation:
+          type: string
+        required_actions:
+          type: array
+          items:
+            type: string
+        reviewers:
+          type: array
+          items:
+            type: string
+        check_conclusion:
+          type: string
+          enum: [success, neutral, failure]
+
+    RiskSnapshot:
+      type: object
+      required: [score, band, components, weight_version, policy_version]
+      properties:
+        score:
+          type: integer
+        band:
+          $ref: "#/components/schemas/RiskBand"
+        components:
+          type: object
+          additionalProperties:
+            type: integer
+        weight_version:
+          type: string
+        policy_version:
+          type: integer
+        inputs_hash:
+          type: string
+
+    Finding:
+      type: object
+      required: [id, fingerprint, title, severity, verification]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fingerprint:
+          type: string
+        agent_id:
+          type: string
+        claim_class:
+          type: string
+        title:
+          type: string
+        claim:
+          type: string
+        severity:
+          $ref: "#/components/schemas/Severity"
+        confidence:
+          type: number
+        locations:
+          type: array
+          items:
+            $ref: "#/components/schemas/CodeLocation"
+        verification:
+          $ref: "#/components/schemas/Verification"
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/Evidence"
+        contributes_to_score:
+          type: boolean
+
+    CodeLocation:
+      type: object
+      required: [path, start_line]
+      properties:
+        path:
+          type: string
+        start_line:
+          type: integer
+        end_line:
+          type: integer
+        symbol:
+          type: string
+
+    Verification:
+      type: object
+      required: [status, reason]
+      properties:
+        status:
+          $ref: "#/components/schemas/VerificationStatus"
+        confidence:
+          type: number
+        reason:
+          type: string
+        methods:
+          type: array
+          items:
+            type: string
+
+    Evidence:
+      type: object
+      required: [kind, summary]
+      properties:
+        kind:
+          type: string
+          enum:
+            - code_location
+            - ast_trace
+            - static_analysis
+            - test_result
+            - dependency
+            - reproduction
+            - secret_fingerprint
+            - policy
+        tool:
+          type: string
+        summary:
+          type: string
+        uri:
+          type: string
+
+    FindingFeedbackRequest:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          enum: [correct, incorrect, irrelevant]
+        comment:
+          type: string
+
+    SkillPack:
+      type: object
+      required: [id, version, languages]
+      properties:
+        id:
+          type: string
+        version:
+          type: string
+        languages:
+          type: array
+          items:
+            type: string
+        title:
+          type: string
+
+    ProjectSkill:
+      type: object
+      required: [repository_id, version, status, body]
+      properties:
+        repository_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+        status:
+          type: string
+          enum: [draft, active, archived]
+        body:
+          type: string
+          description: Markdown+YAML project skill document
+
+    ProjectSkillWrite:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+        status:
+          type: string
+          enum: [draft, active]
+
+    PolicyDocument:
+      type: object
+      required: [version, yaml]
+      properties:
+        version:
+          type: integer
+        yaml:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+
+    PolicyWrite:
+      type: object
+      required: [yaml]
+      properties:
+        yaml:
+          type: string
+
+    ImpactGraph:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            required: [id, kind]
+            properties:
+              id:
+                type: string
+              kind:
+                type: string
+              changed:
+                type: boolean
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to, kind]
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+              kind:
+                type: string
+
+    AuditEvent:
+      type: object
+      required: [id, type, at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        at:
+          type: string
+          format: date-time
+        actor_type:
+          type: string
+          enum: [system, user, github]
+        actor_id:
+          type: string
+        pull_request_id:
+          type: string
+          format: uuid
+        payload:
+          type: object
+          additionalProperties: true
+
+    EvalSummary:
+      type: object
+      required: [without_verification, with_verification]
+      properties:
+        without_verification:
+          $ref: "#/components/schemas/EvalCounts"
+        with_verification:
+          $ref: "#/components/schemas/EvalCounts"
+        labeled:
+          type: integer
+
+    EvalCounts:
+      type: object
+      properties:
+        findings:
+          type: integer
+        true_issues:
+          type: integer
+        false_positives:
+          type: integer
+        precision:
+          type: number
+
+security:
+  - bearerJwt: []

@@ -1,0 +1,11 @@
+# Activated on the worker process role: java -jar heimdall.jar --spring.profiles.active=worker
+# Same artifact, same schema, different responsibilities per docs/01-c4-architecture.md
+# ("Orchestrator worker: Same modular monolith, different command").
+server:
+  port: 8081
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

@@ -1,0 +1,106 @@
+# Example org policy for Heimdall
+# Schema: heimdall.policy.v1
+# Admins publish this via PUT /v1/policy. Completed runs pin policy_version.
+
+apiVersion: heimdall.policy/v1
+metadata:
+  name: example-org-default
+  description: Conservative defaults for the GitHub POC
+
+analyze_drafts: false
+
+verdict:
+  weight_version: verdict.weights.v1
+  review_fails_check: false
+  human_critical_verify: false
+  weights:
+    critical_verified_security: 40
+    high_verified_security: 15
+    high_verified_security_cap: 30
+    high_verified_bug: 25
+    additional_verified_bug: 10
+    bug_cap: 35
+    failing_required_tests: 20
+    impact_high: 20
+    impact_medium: 10
+    large_pr: 10
+    missing_tests_risky: 5
+    missing_tests_cap: 10
+    dependency_high: 15
+    dependency_cap: 25
+    secret_verified: 40
+  size:
+    large_files: 40
+    large_lines: 1200
+    medium_files: 15
+    medium_lines: 400
+
+hard_blocks:
+  - verified_secret_non_test
+  - verified_sqli
+  - verified_command_injection
+  - verified_rce
+  - verified_insecure_deserialization
+  - required_tests_failed
+
+protected_paths:
+  action: block
+  globs:
+    - .github/workflows/**
+    - deploy/prod/**
+    - "**/*credentials*"
+
+tests:
+  required: true
+  command_override: null  # Project Skill wins when null
+  timeout_seconds: 600
+
+sandbox:
+  network: none  # none | allowlist
+  allowlist: []
+  memory_mb: 2048
+  cpus: 1
+
+llm:
+  propose_model: qwen2.5-coder:14b
+  summary_model: qwen2.5-coder:7b
+  embed_model: nomic-embed-text
+  temperature: 0.1
+  bug:
+    enabled: true
+  budgets:
+    bug_max_tokens: 4096
+    security_max_tokens: 4096
+    verify_max_tokens: 2048
+    summary_max_tokens: 1024
+  max_files_to_model: 80
+  max_excerpt_lines: 400
+
+clone:
+  depth: 50
+  submodules: false
+  lfs: false
+
+workspace:
+  retain_hours: 24
+
+skills:
+  allow_repo_overlay: false
+  language_pins:
+    java: "1.0.0"
+    python: "1.0.0"
+    go: "1.0.0"
+    typescript: "1.0.0"
+    sql: "1.0.0"
+    terraform: "1.0.0"
+    kubernetes: "1.0.0"
+
+concurrency:
+  max_running_per_org: 2
+
+suppressions:
+  secret_max_days: 7
+  require_admin_for_secret: true
+
+retention:
+  audit_days: 400

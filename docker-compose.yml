@@ -1,0 +1,79 @@
+# Local/dev topology mirroring the four Podman pods in
+# docs/08-deployment-podman.md (control, data, worker, llm), collapsed to a
+# single compose file. Works with `docker compose` or `podman-compose`.
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: heimdall
+      POSTGRES_USER: ${DB_USER:-heimdall}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-heimdall}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-heimdall}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    # After first start: `docker exec -it heimdall-ollama-1 ollama pull qwen2.5-coder:14b`
+    #                     `docker exec -it heimdall-ollama-1 ollama pull nomic-embed-text`
+
+  api:
+    build:
+      context: .
+      dockerfile: Containerfile.backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: ${DB_URL}
+      DB_USER: ${DB_USER:-heimdall}
+      DB_PASSWORD: ${DB_PASSWORD:-heimdall}
+      JWT_SECRET: ${JWT_SECRET}
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      OLLAMA_BASE_URL: http://ollama:11434
+    ports:
+      - "8080:8080"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Containerfile.backend
+    command: ["--spring.profiles.active=worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: ${DB_URL}
+      DB_USER: ${DB_USER:-heimdall}
+      DB_PASSWORD: ${DB_PASSWORD:-heimdall}
+      JWT_SECRET: ${JWT_SECRET}
+      OLLAMA_BASE_URL: http://ollama:11434
+      GITHUB_DEV_TOKEN: ${GITHUB_DEV_TOKEN}
+    # Sandbox (docs/07-security.md): no network beyond the initial clone.
+    # Modeled here as a separate rootless run profile in real Podman Quadlet
+    # units; compose keeps it simple by sharing the worker's network for now.
+
+  console:
+    build:
+      context: ./console
+    depends_on:
+      - api
+    ports:
+      - "5173:80"
+
+volumes:
+  pgdata:
+  ollama-models:

@@ -1,0 +1,8 @@
+skill_id: python
+version: 1.0.0
+claim_classes: [bug, security, testing]
+prompt_template: >
+  You are a senior Python reviewer. Focus on type errors, injection risk
+  (eval/exec, SQL string formatting, subprocess shell=True), and untested
+  branches. Output candidate findings only as JSON matching
+  heimdall.finding.v1.
